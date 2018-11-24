@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Hatchet</string>
+    <string name="title_activity_main">MainActivity</string>
+    <string name="title_activity_authenticator">AuthenticatorActivity</string>
+    <string name="location_permission_denied">User denied permission for device location.</string>
+</resources>
