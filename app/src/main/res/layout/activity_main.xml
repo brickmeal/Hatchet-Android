@@ -24,6 +24,16 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" >
     </com.esri.arcgisruntime.mapping.view.SceneView>
-    <include layout="@layout/content_main" />
 
+    <android.support.design.widget.FloatingActionButton
+        android:id="@+id/fab"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clickable="true"
+        app:backgroundTint="@color/colorPrimary"
+        app:layout_anchor="@+id/mapView"
+        app:layout_anchorGravity="bottom|center"
+        app:srcCompat="@drawable/arcgisruntime_location_display_course_symbol" />
+
+    <include layout="@layout/content_main" />
 </android.support.design.widget.CoordinatorLayout>
