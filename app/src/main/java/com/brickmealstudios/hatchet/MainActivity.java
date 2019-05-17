@@ -1,46 +1,76 @@
 package com.brickmealstudios.hatchet;
 
-import android.Manifest;
-import android.content.Context;
-import android.content.pm.PackageManager;
+import android.annotation.SuppressLint;
 import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
 import android.os.Bundle;
-import android.support.design.widget.FloatingActionButton;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.Toolbar;
 import android.util.Log;
-import android.view.View;
+import android.widget.Toast;
+import android.graphics.Color;
 
 import com.amazonaws.mobileconnectors.pinpoint.PinpointManager;
 import com.amazonaws.mobileconnectors.pinpoint.PinpointConfiguration;
 import com.amazonaws.mobile.client.AWSStartupHandler;
 import com.amazonaws.mobile.client.AWSStartupResult;
 import com.amazonaws.mobile.client.AWSMobileClient;
-import com.esri.arcgisruntime.mapping.ArcGISScene;
-import com.esri.arcgisruntime.mapping.Basemap;
-import com.esri.arcgisruntime.mapping.view.Camera;
-import com.esri.arcgisruntime.mapping.view.SceneView;
 
+import com.mapbox.android.core.location.LocationEngine;
+import com.mapbox.android.core.location.LocationEngineCallback;
+import com.mapbox.android.core.location.LocationEngineProvider;
+import com.mapbox.android.core.location.LocationEngineRequest;
+import com.mapbox.android.core.location.LocationEngineResult;
+import com.mapbox.android.core.permissions.PermissionsListener;
+import com.mapbox.android.core.permissions.PermissionsManager;
+import com.mapbox.mapboxsdk.Mapbox;
+import com.mapbox.mapboxsdk.location.LocationComponent;
+import com.mapbox.mapboxsdk.location.LocationComponentActivationOptions;
+import com.mapbox.mapboxsdk.location.modes.CameraMode;
+import com.mapbox.mapboxsdk.location.modes.RenderMode;
+import com.mapbox.mapboxsdk.maps.MapView;
+import com.mapbox.mapboxsdk.maps.MapboxMap;
+import com.mapbox.mapboxsdk.maps.OnMapReadyCallback;
+import com.mapbox.mapboxsdk.maps.Style;
+import com.mapbox.mapboxsdk.style.layers.FillExtrusionLayer;
+
+import java.lang.ref.WeakReference;
 import java.util.HashMap;
+import java.util.List;
+
+import static com.mapbox.mapboxsdk.style.expressions.Expression.eq;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.exponential;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.get;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.interpolate;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.literal;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.stop;
+import static com.mapbox.mapboxsdk.style.expressions.Expression.zoom;
+import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionBase;
+import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionColor;
+import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionHeight;
+import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionOpacity;
 
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements
+        OnMapReadyCallback, PermissionsListener {
 
     public static PinpointManager pinpointManager;
-    private SceneView mSceneView;
-    private LocationManager mLocationManager;
-    private LocationListener mLocationListener;
-    private double altitude = 20.0;
-    private double pitch = 70.0;
-    private double roll = 0.0;
+    private PermissionsManager permissionsManager;
+    private MapboxMap mapboxMap;
+    private MapView mapView;
+    // Variables needed to add the location engine
+    private LocationEngine locationEngine;
+    private long DEFAULT_INTERVAL_IN_MILLISECONDS = 1000L;
+    private long DEFAULT_MAX_WAIT_TIME = DEFAULT_INTERVAL_IN_MILLISECONDS * 5;
+
+    private MainActivityLocationCallback callback = new MainActivityLocationCallback(this);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        Mapbox.getInstance(this, "pk.eyJ1IjoiYnJpY2ttZWFsIiwiYSI6ImNqdnJmMzFrZDJ1Zjg0OHFvdzd6MDg4Z2cifQ._Syetqd3YlBQWj2OQBi2Uw");
+
+        setContentView(R.layout.activity_main);
 
         AWSMobileClient.getInstance().initialize(this, new AWSStartupHandler() {
             @Override
@@ -58,121 +88,211 @@ public class MainActivity extends AppCompatActivity {
         pinpointManager.getSessionClient().startSession();
         pinpointManager.getAnalyticsClient().submitEvents();
 
-        setContentView(R.layout.activity_main);
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
 
-        mSceneView = findViewById(R.id.mapView);
-        setupMap();
-        setupLocation();
-
-        FloatingActionButton fab = findViewById(R.id.fab);
-        fab.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                startLocationUpdates();
-            }
-        });
+        mapView = findViewById(R.id.mapView);
+        mapView.onCreate(savedInstanceState);
+        mapView.getMapAsync(this);
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        mSceneView.pause();
+    public void onStart() {
+        super.onStart();
+        mapView.onStart();
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
-        mSceneView.resume();
+        mapView.onResume();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        mapView.onPause();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        mapView.onStop();
+    }
+
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        mapView.onLowMemory();
     }
 
     @Override
     protected void onDestroy() {
-        mSceneView.dispose();
         super.onDestroy();
+        // Prevent leaks
+        if (locationEngine != null) {
+            locationEngine.removeLocationUpdates(callback);
+        }
+        mapView.onDestroy();
     }
 
-    private void setupMap() {
-        if (mSceneView != null) {
-            ArcGISScene scene = new ArcGISScene();
-            scene.setBasemap(Basemap.createStreets());
-            mSceneView.setScene(scene);
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        mapView.onSaveInstanceState(outState);
+    }
+
+    @Override
+    public void onMapReady(@NonNull final MapboxMap mapboxMap) {
+        MainActivity.this.mapboxMap = mapboxMap;
+
+        mapboxMap.setStyle(new Style.Builder().fromUrl("mapbox://styles/brickmeal/cjvrhyr5d0hyj1dmoin32bl02"),
+                new Style.OnStyleLoaded() {
+                    @Override
+                    public void onStyleLoaded(@NonNull Style style) {
+                        enableLocationComponent(style);
+                        setupBuildings(style);
+                    }
+                });
+    }
+
+    private void setupBuildings(@NonNull Style loadedMapStyle) {
+        FillExtrusionLayer fillExtrusionLayer = new FillExtrusionLayer("3d-buildings", "composite");
+        fillExtrusionLayer.setSourceLayer("building");
+        fillExtrusionLayer.setFilter(eq(get("extrude"), "true"));
+        fillExtrusionLayer.setMinZoom(15);
+        fillExtrusionLayer.setProperties(
+                fillExtrusionColor(Color.LTGRAY),
+                fillExtrusionHeight(
+                        interpolate(
+                                exponential(1f),
+                                zoom(),
+                                stop(15, literal(0)),
+                                stop(16, get("height"))
+                        )
+                ),
+                fillExtrusionBase(get("min_height")),
+                fillExtrusionOpacity(0.9f)
+        );
+        loadedMapStyle.addLayer(fillExtrusionLayer);
+    }
+
+    @SuppressWarnings( {"MissingPermission"})
+    private void enableLocationComponent(@NonNull Style loadedMapStyle) {
+        // Check if permissions are enabled and if not request
+        if (PermissionsManager.areLocationPermissionsGranted(this)) {
+
+            // Get an instance of the component
+            LocationComponent locationComponent = mapboxMap.getLocationComponent();
+
+            // Activate with options
+            locationComponent.activateLocationComponent(
+                    LocationComponentActivationOptions.builder(this, loadedMapStyle).build());
+
+            // Enable to make component visible
+            locationComponent.setLocationComponentEnabled(true);
+
+            // Set the component's camera mode
+            locationComponent.setCameraMode(CameraMode.TRACKING_COMPASS);
+
+            // Set the component's render mode
+            locationComponent.setRenderMode(RenderMode.COMPASS);
+
+            initLocationEngine();
+        } else {
+            permissionsManager = new PermissionsManager(this);
+            permissionsManager.requestLocationPermissions(this);
         }
     }
 
-    private void setupLocation() {
-        // Acquire a reference to the system Location Manager
-        mLocationManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
+    /**
+     * Set up the LocationEngine and the parameters for querying the device's location
+     */
+    @SuppressLint("MissingPermission")
+    private void initLocationEngine() {
+        locationEngine = LocationEngineProvider.getBestLocationEngine(this);
 
-        // Define a listener that responds to location updates
-        mLocationListener = new LocationListener() {
-            public void onLocationChanged(Location location) {
-                double deviceLat = location.getLatitude();
-                double deviceLng = location.getLongitude();
-                double deviceBrng = location.getBearing();
-                HashMap<String, Double> cameraPos = calcCameraPosition(deviceLat, deviceLng, deviceBrng);
-                double camLat = cameraPos.getOrDefault("lat", deviceLat);
-                double camLng = cameraPos.getOrDefault("lng", deviceLng);
-                Log.d("YourMainActivity", String.format("Lat: %s, Lng: %s, Brng: %s", Double.toString(camLat), Double.toString(camLng), Double.toString(deviceBrng)));
-                Camera camera = new Camera(deviceLat, deviceLng, altitude, deviceBrng, pitch, roll);
-                mSceneView.setViewpointCamera(camera);
-            }
+        LocationEngineRequest request = new LocationEngineRequest.Builder(DEFAULT_INTERVAL_IN_MILLISECONDS)
+                .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
+                .setMaxWaitTime(DEFAULT_MAX_WAIT_TIME).build();
 
-            public void onStatusChanged(String provider, int status, Bundle extras) {}
-
-            public void onProviderEnabled(String provider) {}
-
-            public void onProviderDisabled(String provider) {}
-        };
+        locationEngine.requestLocationUpdates(request, callback, getMainLooper());
+        locationEngine.getLastLocation(callback);
     }
 
-    private double calcBackBearing(double bearing) {
-        if (bearing >= 180.0) {
-            return bearing - 180.0;
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        permissionsManager.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
+
+    @Override
+    public void onExplanationNeeded(List<String> permissionsToExplain) {
+        Toast.makeText(this, R.string.user_location_permission_not_granted, Toast.LENGTH_LONG).show();
+    }
+
+    @Override
+    public void onPermissionResult(boolean granted) {
+        if (granted) {
+            mapboxMap.getStyle(new Style.OnStyleLoaded() {
+                @Override
+                public void onStyleLoaded(@NonNull Style style) {
+                    enableLocationComponent(style);
+                }
+            });
         } else {
-            return bearing + 180.0;
+            Toast.makeText(this, R.string.user_location_permission_not_granted, Toast.LENGTH_LONG).show();
+            finish();
         }
     }
 
-    private HashMap<String, Double> calcCameraPosition(double deviceLat, double deviceLng, double deviceBrng) {
-        // Radius of the earth
-        double R = 6378.1;
-        // How far behind the player to place the camera (in km)
-        double DeviceCameraGap = 200.0 / 1000.0;
+    private static class MainActivityLocationCallback
+            implements LocationEngineCallback<LocationEngineResult> {
 
-        double deviceLatRadians = Math.toRadians(deviceLat);
-        double deviceLngRadians = Math.toRadians(deviceLng);
-        double backBearing = calcBackBearing(deviceBrng);
+        private final WeakReference<MainActivity> activityWeakReference;
 
-        double backLatRadians = Math.asin(Math.sin(deviceLatRadians) * Math.cos(DeviceCameraGap/R) +
-                Math.cos(deviceLatRadians) * Math.sin(DeviceCameraGap/R) * Math.cos(backBearing));
+        MainActivityLocationCallback(MainActivity activity) {
+            this.activityWeakReference = new WeakReference<>(activity);
+        }
 
-        double backLngRadians = deviceLngRadians + Math.atan2(Math.sin(backBearing) * Math.sin(DeviceCameraGap/R) * Math.cos(deviceLatRadians),
-                Math.cos(DeviceCameraGap/R) - Math.sin(deviceLatRadians) * Math.sin(backLatRadians));
+        /**
+         * The LocationEngineCallback interface's method which fires when the device's location has changed.
+         *
+         * @param result the LocationEngineResult object which has the last known location within it.
+         */
+        @Override
+        public void onSuccess(LocationEngineResult result) {
+            MainActivity activity = activityWeakReference.get();
 
-        HashMap hm = new HashMap();
-        hm.put("lat", Math.toDegrees(backLatRadians));
-        hm.put("lng", Math.toDegrees(backLngRadians));
-        return hm;
-    }
+            if (activity != null) {
+                Location location = result.getLastLocation();
 
-    private void startLocationUpdates() {
-        Log.d("YourMainActivity", "Start Location Updates Button Pressed");
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)) {
-                Log.d("YourMainActivity", "Should Show Request Permission Rationale");
-            } else {
-                Log.d("YourMainActivity", "Requesting location access permission");
-                ActivityCompat.requestPermissions(this,
-                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                        1);
+                if (location == null) {
+                    return;
+                }
+
+                // Create a Toast which displays the new location's coordinates
+                Toast.makeText(activity, String.format(activity.getString(R.string.new_location),
+                        String.valueOf(result.getLastLocation().getLatitude()), String.valueOf(result.getLastLocation().getLongitude())),
+                        Toast.LENGTH_SHORT).show();
+
+// Pass the new location to the Maps SDK's LocationComponent
+                if (activity.mapboxMap != null && result.getLastLocation() != null) {
+                    activity.mapboxMap.getLocationComponent().forceLocationUpdate(result.getLastLocation());
+                }
             }
-        } else {
-            // Register the listener with the Location Manager to receive location updates
-            Log.d("YourMainActivity", "Registering location update listener");
-            mLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 3000, 2, mLocationListener);
+        }
+
+        /**
+         * The LocationEngineCallback interface's method which fires when the device's location can not be captured
+         *
+         * @param exception the exception message
+         */
+        @Override
+        public void onFailure(@NonNull Exception exception) {
+            Log.d("LocationChangeActivity", exception.getLocalizedMessage());
+            MainActivity activity = activityWeakReference.get();
+            if (activity != null) {
+                Toast.makeText(activity, exception.getLocalizedMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
         }
     }
 }

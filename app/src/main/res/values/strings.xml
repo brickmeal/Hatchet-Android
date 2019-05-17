@@ -3,4 +3,6 @@
     <string name="title_activity_main">MainActivity</string>
     <string name="title_activity_authenticator">AuthenticatorActivity</string>
     <string name="location_permission_denied">User denied permission for device location.</string>
+    <string name="user_location_permission_not_granted">Shiggity Schwap</string>
+    <string name="new_location">Location: %s, %s</string>
 </resources>
