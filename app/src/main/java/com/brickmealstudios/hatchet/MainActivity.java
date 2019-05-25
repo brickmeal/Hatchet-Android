@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
 
@@ -34,7 +35,6 @@ import com.mapbox.mapboxsdk.maps.Style;
 import com.mapbox.mapboxsdk.style.layers.FillExtrusionLayer;
 
 import java.lang.ref.WeakReference;
-import java.util.HashMap;
 import java.util.List;
 
 import static com.mapbox.mapboxsdk.style.expressions.Expression.eq;
@@ -49,16 +49,23 @@ import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionCol
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionHeight;
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.fillExtrusionOpacity;
 
+import com.brickmealstudios.hatchet.comms.ServerConnection;
+import com.brickmealstudios.hatchet.comms.ServerConnection.ConnectionStatus;
+
 
 public class MainActivity extends AppCompatActivity implements
-        OnMapReadyCallback, PermissionsListener {
+        OnMapReadyCallback, PermissionsListener, ServerConnection.ServerListener {
 
     public static PinpointManager pinpointManager;
     private PermissionsManager permissionsManager;
     private MapboxMap mapboxMap;
     private MapView mapView;
-    // Variables needed to add the location engine
+    private TextView output;
+    private ServerConnection mServerConnection;
     private LocationEngine locationEngine;
+
+    private final String SERVER_URL = "wss://ueav0pr55f.execute-api.us-east-1.amazonaws.com/development";
+    // Variables needed to add the location engine
     private long DEFAULT_INTERVAL_IN_MILLISECONDS = 1000L;
     private long DEFAULT_MAX_WAIT_TIME = DEFAULT_INTERVAL_IN_MILLISECONDS * 5;
 
@@ -67,10 +74,12 @@ public class MainActivity extends AppCompatActivity implements
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         Mapbox.getInstance(this, "pk.eyJ1IjoiYnJpY2ttZWFsIiwiYSI6ImNqdnJmMzFrZDJ1Zjg0OHFvdzd6MDg4Z2cifQ._Syetqd3YlBQWj2OQBi2Uw");
-
         setContentView(R.layout.activity_main);
+
+        output = findViewById(R.id.output);
+
+        mServerConnection = new ServerConnection(SERVER_URL);
 
         AWSMobileClient.getInstance().initialize(this, new AWSStartupHandler() {
             @Override
@@ -92,6 +101,7 @@ public class MainActivity extends AppCompatActivity implements
         mapView = findViewById(R.id.mapView);
         mapView.onCreate(savedInstanceState);
         mapView.getMapAsync(this);
+
     }
 
     @Override
@@ -103,12 +113,14 @@ public class MainActivity extends AppCompatActivity implements
     @Override
     public void onResume() {
         super.onResume();
+        mServerConnection.connect(this);
         mapView.onResume();
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        mServerConnection.disconnect();
         mapView.onPause();
     }
 
@@ -132,6 +144,20 @@ public class MainActivity extends AppCompatActivity implements
             locationEngine.removeLocationUpdates(callback);
         }
         mapView.onDestroy();
+    }
+
+    @Override
+    public void onNewMessage(String message) {
+        Log.d("MessageReceived", message);
+        output.setText(output.getText().toString() + "\n\n" + message);
+    }
+
+    @Override
+    public void onStatusChange(ConnectionStatus status) {
+
+        String statusMsg = (status == ConnectionStatus.CONNECTED ?
+                "Connected" : "Disconnected");
+        Log.d("ConnectionStatusChange", statusMsg);
     }
 
     @Override
@@ -212,7 +238,7 @@ public class MainActivity extends AppCompatActivity implements
 
         LocationEngineRequest request = new LocationEngineRequest.Builder(DEFAULT_INTERVAL_IN_MILLISECONDS)
                 .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
-                .setMaxWaitTime(DEFAULT_MAX_WAIT_TIME).build();
+                .setDisplacement(5.0f).build();
 
         locationEngine.requestLocationUpdates(request, callback, getMainLooper());
         locationEngine.getLastLocation(callback);
@@ -243,7 +269,7 @@ public class MainActivity extends AppCompatActivity implements
         }
     }
 
-    private static class MainActivityLocationCallback
+    private class MainActivityLocationCallback
             implements LocationEngineCallback<LocationEngineResult> {
 
         private final WeakReference<MainActivity> activityWeakReference;
@@ -268,10 +294,10 @@ public class MainActivity extends AppCompatActivity implements
                     return;
                 }
 
-                // Create a Toast which displays the new location's coordinates
-                Toast.makeText(activity, String.format(activity.getString(R.string.new_location),
-                        String.valueOf(result.getLastLocation().getLatitude()), String.valueOf(result.getLastLocation().getLongitude())),
-                        Toast.LENGTH_SHORT).show();
+                String loc = String.format(activity.getString(R.string.new_location),
+                        String.valueOf(result.getLastLocation().getLatitude()), String.valueOf(result.getLastLocation().getLongitude()));
+
+                activity.mServerConnection.sendMessage(loc);
 
 // Pass the new location to the Maps SDK's LocationComponent
                 if (activity.mapboxMap != null && result.getLastLocation() != null) {
