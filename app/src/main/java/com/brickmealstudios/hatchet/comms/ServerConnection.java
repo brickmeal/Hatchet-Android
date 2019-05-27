@@ -1,9 +1,13 @@
 package com.brickmealstudios.hatchet.comms;
 
 
+import android.location.Location;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
+
+import com.brickmealstudios.hatchet.types.Telemetry;
+import com.google.gson.Gson;
 
 import java.util.concurrent.TimeUnit;
 
@@ -92,6 +96,14 @@ public class ServerConnection {
 
     public void sendMessage(String message) {
         Log.d("ServerConnection", "Sending message");
+        mWebSocket.send(message);
+    }
+
+    public void sendTelemetry(Location loc) {
+        Gson gson = new Gson();
+        Telemetry t = new Telemetry(loc);
+        String message = gson.toJson(t);
+        Log.d("ServerConnection", "Sending telemetry: " + message);
         mWebSocket.send(message);
     }
 }

@@ -294,10 +294,7 @@ public class MainActivity extends AppCompatActivity implements
                     return;
                 }
 
-                String loc = String.format(activity.getString(R.string.new_location),
-                        String.valueOf(result.getLastLocation().getLatitude()), String.valueOf(result.getLastLocation().getLongitude()));
-
-                activity.mServerConnection.sendMessage(loc);
+                activity.mServerConnection.sendTelemetry(result.getLastLocation());
 
 // Pass the new location to the Maps SDK's LocationComponent
                 if (activity.mapboxMap != null && result.getLastLocation() != null) {
